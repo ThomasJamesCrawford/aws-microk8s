@@ -62,6 +62,14 @@ export class AwsMicrok8SStack extends cdk.Stack {
       }
     );
 
+    autoscalingGroup.userData.addCommands(
+      "snap install microk8s --classic",
+      "usermod -a -G microk8s ec2-user",
+      "chown -f -R ec2-user ~/.kube",
+      "microk8s status --wait-ready",
+      "microk8s enable dns storage helm3"
+    );
+
     new cdk.CfnOutput(this, "Key Name", { value: key.keyPairName });
 
     new cdk.CfnOutput(this, "Download Key Command", {
