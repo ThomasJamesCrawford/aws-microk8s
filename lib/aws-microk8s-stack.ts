@@ -70,6 +70,21 @@ export class AwsMicrok8SStack extends cdk.Stack {
       "microk8s enable dns storage helm3"
     );
 
+    // This doesn't have termination protection so be careful
+    const rdsInstance = new rds.DatabaseInstance(this, "Cdk-rds-instance", {
+      engine: rds.DatabaseInstanceEngine.postgres({
+        version: rds.PostgresEngineVersion.VER_13_3,
+      }),
+      instanceType: ec2.InstanceType.of(
+        ec2.InstanceClass.T2,
+        ec2.InstanceSize.MICRO
+      ),
+      vpc,
+      vpcSubnets: {
+        subnetType: ec2.SubnetType.PRIVATE_ISOLATED,
+      },
+    });
+
     new cdk.CfnOutput(this, "Key Name", { value: key.keyPairName });
 
     new cdk.CfnOutput(this, "Download Key Command", {
