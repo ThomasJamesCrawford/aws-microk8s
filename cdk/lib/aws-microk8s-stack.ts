@@ -1,6 +1,7 @@
 import * as cdk from "@aws-cdk/core";
 import * as ec2 from "@aws-cdk/aws-ec2";
 import * as rds from "@aws-cdk/aws-rds";
+import * as asg from "@aws-cdk/aws-autoscaling";
 import { KeyPair } from "cdk-ec2-key-pair";
 
 export class AwsMicrok8SStack extends cdk.Stack {
@@ -42,37 +43,33 @@ export class AwsMicrok8SStack extends cdk.Stack {
       description: "key pair created by cdk deployment",
     });
 
-    const elasticIp = new ec2.CfnEIP(this, "elastic-ip");
-
-    const ec2Instance = new ec2.Instance(this, "ec2-instance", {
-      vpc,
-      vpcSubnets: {
-        subnetType: ec2.SubnetType.PUBLIC,
-      },
-      securityGroup: ec2InstanceSG,
-      instanceType: ec2.InstanceType.of(
-        ec2.InstanceClass.T3,
-        ec2.InstanceSize.MICRO
-      ),
-      machineImage: ec2.MachineImage.fromSsmParameter(
-        "/aws/service/canonical/ubuntu/server/focal/stable/current/amd64/hvm/ebs-gp2/ami-id",
-        { os: ec2.OperatingSystemType.LINUX }
-      ),
-      keyName: key.keyPairName,
-      blockDevices: [
-        {
-          deviceName: "/dev/sda1",
-          volume: ec2.BlockDeviceVolume.ebs(20),
+    const autoscalingGroup = new asg.AutoScalingGroup(
+      this,
+      "ec2-instance-asg",
+      {
+        vpc,
+        vpcSubnets: {
+          subnetType: ec2.SubnetType.PUBLIC,
         },
-      ],
-    });
-
-    new ec2.CfnEIPAssociation(this, "ec2EIPAssociation", {
-      eip: elasticIp.ref,
-      instanceId: ec2Instance.instanceId,
-    });
-
-    ec2Instance.userData.addCommands(
+        securityGroup: ec2InstanceSG,
+        instanceType: ec2.InstanceType.of(
+          ec2.InstanceClass.T3,
+          ec2.InstanceSize.MICRO
+        ),
+        machineImage: ec2.MachineImage.fromSsmParameter(
+          "/aws/service/canonical/ubuntu/server/focal/stable/current/amd64/hvm/ebs-gp2/ami-id",
+          { os: ec2.OperatingSystemType.LINUX }
+        ),
+        keyName: key.keyPairName,
+        blockDevices: [
+          {
+            deviceName: "/dev/sda1",
+            volume: asg.BlockDeviceVolume.ebs(20),
+          },
+        ],
+      }
+    );
+    autoscalingGroup.userData.addCommands(
       "apt update",
       "apt install snapd",
       "snap install microk8s --classic",
