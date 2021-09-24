@@ -2,7 +2,8 @@ import * as cdk from "@aws-cdk/core";
 import * as ec2 from "@aws-cdk/aws-ec2";
 import * as rds from "@aws-cdk/aws-rds";
 import * as asg from "@aws-cdk/aws-autoscaling";
-import { KeyPair } from "cdk-ec2-key-pair";
+import * as iam from "@aws-cdk/aws-iam";
+import { readFileSync } from "fs";
 
 export class AwsMicrok8SStack extends cdk.Stack {
   constructor(scope: cdk.Construct, id: string, props?: cdk.StackProps) {
@@ -30,18 +31,40 @@ export class AwsMicrok8SStack extends cdk.Stack {
       vpc,
     });
 
-    ec2InstanceSG.addIngressRule(
-      ec2.Peer.anyIpv4(),
-      ec2.Port.tcp(22),
-      "allow SSH connections from anywhere"
-    );
-
+    ec2InstanceSG.addIngressRule(ec2.Peer.anyIpv4(), ec2.Port.tcp(22));
+    ec2InstanceSG.addIngressRule(ec2.Peer.anyIpv4(), ec2.Port.tcp(443));
     ec2InstanceSG.addIngressRule(ec2.Peer.anyIpv4(), ec2.Port.tcp(80));
 
-    const key = new KeyPair(this, "KeyPair", {
-      name: "cdk-keypair",
-      description: "key pair created by cdk deployment",
+    const elasticIp = new ec2.CfnEIP(this, "cdk-eip");
+
+    const ec2Role = new iam.Role(this, "ec2-role", {
+      assumedBy: new iam.ServicePrincipal("ec2.amazonaws.com"),
     });
+
+    ec2Role.addToPolicy(
+      new iam.PolicyStatement({
+        actions: ["ec2:AssociateAddress", "ec2:DisassociateAddress"],
+        resources: ["*"],
+      })
+    );
+
+    const userData = ec2.UserData.custom(
+      cdk.Fn.sub(readFileSync("userData/associate-elastic-ip.sh", "utf-8"), {
+        ELASTIC_IP_ALLOCATION_ID: elasticIp.attrAllocationId,
+      })
+    );
+
+    userData.addCommands(
+      "apt update",
+      "apt install snapd",
+      "snap install microk8s --classic",
+      "usermod -a -G microk8s ubuntu",
+      "chown -f -R ubuntu ~/.kube",
+      "newgrp microk8s",
+      "su - ubuntu",
+      "microk8s status --wait-ready",
+      `microk8s enable dns storage helm3 metallb:${elasticIp.ref}`
+    );
 
     const autoscalingGroup = new asg.AutoScalingGroup(
       this,
@@ -60,24 +83,16 @@ export class AwsMicrok8SStack extends cdk.Stack {
           "/aws/service/canonical/ubuntu/server/focal/stable/current/amd64/hvm/ebs-gp2/ami-id",
           { os: ec2.OperatingSystemType.LINUX }
         ),
-        keyName: key.keyPairName,
         blockDevices: [
           {
             deviceName: "/dev/sda1",
             volume: asg.BlockDeviceVolume.ebs(20),
           },
         ],
+        userData,
+        updatePolicy: asg.UpdatePolicy.rollingUpdate(),
+        role: ec2Role,
       }
-    );
-    autoscalingGroup.userData.addCommands(
-      "apt update",
-      "apt install snapd",
-      "snap install microk8s --classic",
-      "usermod -a -G microk8s ubuntu",
-      "chown -f -R ubuntu ~/.kube",
-      "newgrp microk8s",
-      "microk8s status --wait-ready",
-      "microk8s enable dns storage helm3"
     );
 
     // This doesn't have termination protection so be careful
@@ -94,8 +109,6 @@ export class AwsMicrok8SStack extends cdk.Stack {
     //     subnetType: ec2.SubnetType.PRIVATE_ISOLATED,
     //   },
     // });
-
-    new cdk.CfnOutput(this, "Key Name", { value: key.keyPairName });
 
     new cdk.CfnOutput(this, "Download Key Command", {
       value:
